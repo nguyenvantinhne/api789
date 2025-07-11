@@ -10,6 +10,7 @@ const PORT = process.env.PORT || 3002;
 const WS_URL = "wss://websocket.atpman.net/websocket";
 const HEARTBEAT_INTERVAL = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
+const SESSION_TIMEOUT = 10000; // 10 giây timeout cho phiên
 
 // Cấu hình WebSocket headers
 const WS_HEADERS = {
@@ -29,269 +30,151 @@ let gameData = {
   pendingSession: null,
   lastUpdate: Date.now(),
   currentConfidence: Math.floor(Math.random() * (97 - 51 + 1)) + 51,
-  isConnected: false
+  isConnected: false,
+  lastMessageTime: Date.now(),
+  latency: 0
 };
 
-// Bản đồ dự đoán (giữ nguyên)
-const duDoanMap = {  
-  "TXT": "Xỉu", 
-  "TTXX": "Tài", 
-  "XXTXX": "Tài", 
-  "TTX": "Xỉu", 
-  "XTT": "Tài",
-  "TXX": "Tài", 
-  "XTX": "Xỉu", 
-  "TXTX": "Tài", 
-  "XTXX": "Tài", 
-  "XXTX": "Tài",
-  "TXTT": "Xỉu", 
-  "TTT": "Tài", 
-  "XXX": "Tài", 
-  "TXXT": "Tài", 
-  "XTXT": "Xỉu",
-  "TXXT": "Tài", 
-  "XXTT": "Tài", 
-  "TTXX": "Xỉu", 
-  "XTTX": "Tài", 
-  "XTXTX": "Tài",
-  "TTXXX": "Tài", 
-  "XTTXT": "Tài", 
-  "XXTXT": "Xỉu", 
-  "TXTTX": "Tài", 
-  "XTXXT": "Tài",
-  "TTTXX": "Xỉu", 
-  "XXTTT": "Tài", 
-  "XTXTT": "Tài", 
-  "TXTXT": "Tài", 
-  "TTXTX": "Xỉu",
-  "TXTTT": "Xỉu", 
-  "XXTXTX": "Tài", 
-  "XTXXTX": "Tài", 
-  "TXTTTX": "Tài", 
-  "TTTTXX": "Xỉu",
-  "XTXTTX": "Tài", 
-  "XTXXTT": "Tài", 
-  "TXXTXX": "Tài", 
-  "XXTXXT": "Tài", 
-  "TXTTXX": "Xỉu",
-  "TTTXTX": "Xỉu", 
-  "TTXTTT": "Tài", 
-  "TXXTTX": "Tài", 
-  "XXTTTX": "Tài", 
-  "XTTTTX": "Xỉu",
-  "TXTXTT": "Tài", 
-  "TXTXTX": "Tài", 
-  "TTTTX": "Tài", 
-  "XXXTX": "Tài", 
-  "TXTTTX": "Xỉu",
-  "XTXXXT": "Tài", 
-  "XXTTXX": "Tài", 
-  "TTTXXT": "Xỉu", 
-  "XXTXXX": "Tài", 
-  "XTXTXT": "Tài",
-  "TTXXTX": "Tài", 
-  "TTXXT": "Tài", 
-  "TXXTX": "Xỉu", 
-  "XTXXX": "Tài", 
-  "XTXTX": "Xỉu",
-  "TTXT": "Xỉu", 
-  "TTTXT": "Xỉu",
-  "TTTT": "Tài",
-  "TTTTT": "Tài",
+// Bản đồ dự đoán đầy đủ
+const duDoanMap = {
   "TTTTTT": "Xỉu",
-  "TTTTTTT": "Tài",
-  "TTTTTTX": "Xỉu",
   "TTTTTX": "Xỉu",
-  "TTTTTXT": "Xỉu",
-  "TTTTTXX": "Tài",
   "TTTTXT": "Xỉu",
-  "TTTTXTT": "Tài",
-  "TTTTXTX": "Xỉu",
-  "TTTTXXT": "Xỉu",
-  "TTTTXXX": "Tài",
-  "TTTX": "Xỉu",
-  "TTTXTT": "Tài",
-  "TTTXTTT": "Xỉu",
-  "TTTXTTX": "Xỉu",
-  "TTTXTXT": "Tài",
-  "TTTXTXX": "Tài",
-  "TTTXXTT": "Tài",
-  "TTTXXTX": "Tài",
+  "TTTTXX": "Tài",
+  "TTTXTT": "Xỉu",
+  "TTTXTX": "Tài",
+  "TTTXXT": "Tài",
   "TTTXXX": "Xỉu",
-  "TTTXXXT": "Tài",
-  "TTTXXXX": "Xỉu",
-  "TTXTT": "Xỉu",
-  "TTXTTTT": "Xỉu",
-  "TTXTTTX": "Xỉu",
+  "TTXTTT": "Xỉu",
   "TTXTTX": "Tài",
-  "TTXTTXT": "Tài",
-  "TTXTTXX": "Xỉu",
-  "TTXTXT": "Xỉu",
-  "TTXTXTT": "Tài",
-  "TTXTXTX": "Tài",
+  "TTXTXT": "Tài",
   "TTXTXX": "Xỉu",
-  "TTXTXXT": "Tài",
-  "TTXTXXX": "Xỉu",
   "TTXXTT": "Tài",
-  "TTXXTTT": "Xỉu",
-  "TTXXTTX": "Tài",
-  "TTXXTXT": "Tài",
-  "TTXXTXX": "Xỉu",
+  "TTXXTX": "Xỉu",
   "TTXXXT": "Xỉu",
-  "TTXXXTT": "Tài",
-  "TTXXXTX": "Tài",
-  "TTXXXX": "Xỉu",
-  "TTXXXXT": "Tài",
-  "TTXXXXX": "Xỉu",
+  "TTXXXX": "Tài",
   "TXTTTT": "Xỉu",
-  "TXTTTTT": "Xỉu",
-  "TXTTTTX": "Xỉu",
-  "TXTTTXT": "Xỉu",
-  "TXTTTXX": "Tài",
+  "TXTTTX": "Tài",
   "TXTTXT": "Tài",
-  "TXTTXTT": "Tài",
-  "TXTTXTX": "Tài",
-  "TXTTXXT": "Tài",
-  "TXTTXXX": "Tài",
-  "TXTXTTT": "Tài",
-  "TXTXTTX": "Tài",
-  "TXTXTXT": "Xỉu",
-  "TXTXTXX": "Tài",
-  "TXTXX": "Tài",
-  "TXTXXT": "Tài",
-  "TXTXXTT": "Tài",
-  "TXTXXTX": "Xỉu",
-  "TXTXXX": "Xỉu",
-  "TXTXXXT": "Xỉu",
-  "TXTXXXX": "Xỉu",
-  "TXXTT": "Tài",
+  "TXTTXX": "Xỉu",
+  "TXTXTT": "Tài",
+  "TXTXTX": "Xỉu",
+  "TXTXXT": "Xỉu",
+  "TXTXXX": "Tài",
   "TXXTTT": "Tài",
-  "TXXTTTT": "Tài",
-  "TXXTTTX": "Tài",
-  "TXXTTXT": "Xỉu",
-  "TXXTTXX": "Xỉu",
-  "TXXTXT": "Tài",
-  "TXXTXTT": "Tài",
-  "TXXTXTX": "Tài",
-  "TXXTXXT": "Tài",
-  "TXXTXXX": "Xỉu",
-  "TXXX": "Tài",
-  "TXXXT": "Tài",
+  "TXXTTX": "Xỉu",
+  "TXXTXT": "Xỉu",
+  "TXXTXX": "Tài",
   "TXXXTT": "Xỉu",
-  "TXXXTTT": "Tài",
-  "TXXXTTX": "Xỉu",
-  "TXXXTX": "Xỉu",
-  "TXXXTXT": "Tài",
-  "TXXXTXX": "Xỉu",
-  "TXXXX": "Xỉu",
+  "TXXXTX": "Tài",
   "TXXXXT": "Tài",
-  "TXXXXTT": "Xỉu",
-  "TXXXXTX": "Xỉu",
-  "TXXXXX": "Tài",
-  "TXXXXXT": "Xỉu",
-  "TXXXXXX": "Xỉu",
-  "XTTT": "Xỉu",
-  "XTTTT": "Xỉu",
+  "TXXXXX": "Xỉu",
   "XTTTTT": "Tài",
-  "XTTTTTT": "Tài",
-  "XTTTTTX": "Tài",
-  "XTTTTXT": "Tài",
-  "XTTTTXX": "Xỉu",
-  "XTTTX": "Tài",
+  "XTTTTX": "Xỉu",
   "XTTTXT": "Xỉu",
-  "XTTTXTT": "Tài",
-  "XTTTXTX": "Xỉu",
   "XTTTXX": "Tài",
-  "XTTTXXT": "Tài",
-  "XTTTXXX": "Tài",
-  "XTTXTT": "Tài",
-  "XTTXTTT": "Tài",
-  "XTTXTTX": "Tài",
-  "XTTXTX": "Xỉu",
-  "XTTXTXT": "Tài",
-  "XTTXTXX": "Xỉu",
-  "XTTXX": "Xỉu",
-  "XTTXXT": "Xỉu",
-  "XTTXXTT": "Tài",
-  "XTTXXTX": "Xỉu",
-  "XTTXXX": "Tài",
-  "XTTXXXT": "Xỉu",
-  "XTTXXXX": "Tài",
-  "XTXTTT": "Tài",
-  "XTXTTTT": "Tài",
-  "XTXTTTX": "Xỉu",
-  "XTXTTXT": "Xỉu",
-  "XTXTTXX": "Tài",
-  "XTXTXTT": "Tài",
-  "XTXTXTX": "Xỉu",
-  "XTXTXX": "Tài",
-  "XTXTXXT": "Tài",
-  "XTXTXXX": "Tài",
-  "XTXXTTT": "Tài",
-  "XTXXTTX": "Xỉu",
-  "XTXXTXT": "Tài",
-  "XTXXTXX": "Tài",
-  "XTXXXTT": "Xỉu",
-  "XTXXXTX": "Tài",
-  "XTXXXX": "Xỉu",
-  "XTXXXXT": "Tài",
-  "XTXXXXX": "Tài",
-  "XXT": "Xỉu",
-  "XXTTTT": "Tài",
-  "XXTTTTT": "Xỉu",
-  "XXTTTTX": "Tài",
-  "XXTTTXT": "Xỉu",
-  "XXTTTXX": "Xỉu",
-  "XXTTX": "Tài",
-  "XXTTXT": "Xỉu",
-  "XXTTXTT": "Xỉu",
-  "XXTTXTX": "Tài",
-  "XXTTXXT": "Xỉu",
-  "XXTTXXX": "Tài",
+  "XTTXTT": "Xỉu",
+  "XTTXTX": "Tài",
+  "XTTXXT": "Tài",
+  "XTTXXX": "Xỉu",
+  "XTXTTT": "Xỉu",
+  "XTXTTX": "Tài",
+  "XTXTXT": "Tài",
+  "XTXTXX": "Xỉu",
+  "XTXXTT": "Tài",
+  "XTXXTX": "Xỉu",
+  "XTXXXT": "Xỉu",
+  "XTXXXX": "Tài",
+  "XXTTTT": "Xỉu",
+  "XXTTTX": "Tài",
+  "XXTTXT": "Tài",
+  "XXTTXX": "Xỉu",
   "XXTXTT": "Tài",
-  "XXTXTTT": "Tài",
-  "XXTXTTX": "Xỉu",
-  "XXTXTXT": "Tài",
-  "XXTXTXX": "Tài",
-  "XXTXXTT": "Xỉu",
-  "XXTXXTX": "Xỉu",
-  "XXTXXXT": "Tài",
-  "XXTXXXX": "Tài",
-  "XXXT": "Tài",
-  "XXXTT": "Xỉu",
-  "XXXTTT": "Xỉu",
-  "XXXTTTT": "Xỉu",
-  "XXXTTTX": "Xỉu",
-  "XXXTTX": "Tài",
-  "XXXTTXT": "Xỉu",
-  "XXXTTXX": "Xỉu",
-  "XXXTXT": "Tài",
-  "XXXTXTT": "Tài",
-  "XXXTXTX": "Xỉu",
+  "XXTXTX": "Xỉu",
+  "XXTXXT": "Xỉu",
+  "XXTXXX": "Tài",
+  "XXXTTT": "Tài",
+  "XXXTTX": "Xỉu",
+  "XXXTXT": "Xỉu",
   "XXXTXX": "Tài",
-  "XXXTXXT": "Xỉu",
-  "XXXTXXX": "Tài",
-  "XXXX": "Tài",
-  "XXXXT": "Xỉu",
   "XXXXTT": "Xỉu",
-  "XXXXTTT": "Tài",
-  "XXXXTTX": "Tài",
   "XXXXTX": "Tài",
-  "XXXXTXT": "Tài",
-  "XXXXTXX": "Tài",
-  "XXXXX": "Tài",
-  "XXXXXT": "Xỉu",
-  "XXXXXTT": "Tài",
-  "XXXXXTX": "Tài",
-  "XXXXXX": "Tài",
-  "XXXXXXT": "Tài",
-  "XXXXXXX": "Tài"
+  "XXXXXT": "Tài",
+  "XXXXXX": "Xỉu",
+  // Các mẫu ngắn hơn
+  "TTTTT": "Xỉu",
+  "TTTTX": "Xỉu",
+  "TTTXT": "Xỉu",
+  "TTTXX": "Tài",
+  "TTXTT": "Xỉu",
+  "TTXTX": "Tài",
+  "TTXXT": "Tài",
+  "TTXXX": "Xỉu",
+  "TXTTT": "Xỉu",
+  "TXTTX": "Tài",
+  "TXTXT": "Tài",
+  "TXTXX": "Xỉu",
+  "TXXTT": "Tài",
+  "TXXTX": "Xỉu",
+  "TXXXT": "Xỉu",
+  "TXXXX": "Tài",
+  "XTTTT": "Xỉu",
+  "XTTTX": "Tài",
+  "XTTXT": "Tài",
+  "XTTXX": "Xỉu",
+  "XTXTT": "Tài",
+  "XTXTX": "Xỉu",
+  "XTXXT": "Xỉu",
+  "XTXXX": "Tài",
+  "XXTTT": "Tài",
+  "XXTTX": "Xỉu",
+  "XXTXT": "Xỉu",
+  "XXTXX": "Tài",
+  "XXXTT": "Xỉu",
+  "XXXTX": "Tài",
+  "XXXXT": "Tài",
+  "XXXXX": "Xỉu",
+  // Các mẫu ngắn hơn nữa
+  "TTTT": "Xỉu",
+  "TTTX": "Xỉu",
+  "TTXT": "Xỉu",
+  "TTXX": "Tài",
+  "TXTT": "Xỉu",
+  "TXTX": "Tài",
+  "TXXT": "Tài",
+  "TXXX": "Xỉu",
+  "XTTT": "Xỉu",
+  "XTTX": "Tài",
+  "XTXT": "Tài",
+  "XTXX": "Xỉu",
+  "XXTT": "Tài",
+  "XXTX": "Xỉu",
+  "XXXT": "Xỉu",
+  "XXXX": "Tài",
+  // Các mẫu ngắn nhất
+  "TTT": "Xỉu",
+  "TTX": "Xỉu",
+  "TXT": "Tài",
+  "TXX": "Tài",
+  "XTT": "Xỉu",
+  "XTX": "Tài",
+  "XXT": "Xỉu",
+  "XXX": "Tài",
+  "TT": "Xỉu",
+  "TX": "Tài",
+  "XT": "Tài",
+  "XX": "Xỉu",
+  "T": "Tài",
+  "X": "Xỉu"
 };
 
 function duDoanTuTT(pattern) {
-  for (let len = Math.min(pattern.length, 7); len >= 1; len--) {
+  // Ưu tiên tìm mẫu dài nhất trước
+  for (let len = Math.min(pattern.length, 6); len >= 1; len--) {
     const key = pattern.substring(0, len);
-    if (duDoanMap[key]) return duDoanMap[key];
+    if (duDoanMap[key]) {
+      return duDoanMap[key];
+    }
   }
   return pattern[0] === "T" ? "Tài" : "Xỉu";
 }
@@ -300,7 +183,34 @@ function ketQuaTX(d1, d2, d3) {
   return (d1 + d2 + d3) >= 11 ? "T" : "X";
 }
 
+function checkSessionTimeout() {
+  if (gameData.pendingSession && (Date.now() - gameData.pendingSession.timestamp) > SESSION_TIMEOUT) {
+    console.warn(`⚠️ Phiên ${gameData.pendingSession.sid} đã timeout, đẩy vào lịch sử`);
+    gameData.sessions.unshift({
+      sid: gameData.pendingSession.sid,
+      d1: gameData.pendingSession.d1,
+      d2: gameData.pendingSession.d2,
+      d3: gameData.pendingSession.d3,
+      result: ketQuaTX(gameData.pendingSession.d1, gameData.pendingSession.d2, gameData.pendingSession.d3),
+      timestamp: gameData.pendingSession.timestamp
+    });
+    
+    if (gameData.sessions.length > 50) {
+      gameData.sessions.pop();
+    }
+    
+    gameData.pendingSession = null;
+  }
+}
+
+// Biến quản lý kết nối
+let wsConnection = null;
+let heartbeatTimer = null;
+let reconnectAttempts = 0;
+let latencyCheckTimer = null;
+
 function connectWebSocket() {
+  // Dọn dẹp kết nối cũ
   if (wsConnection) {
     wsConnection.removeAllListeners();
     if (wsConnection.readyState !== WebSocket.CLOSED) {
@@ -309,9 +219,14 @@ function connectWebSocket() {
   }
 
   clearInterval(heartbeatTimer);
+  clearInterval(latencyCheckTimer);
 
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
     console.error("Đã đạt số lần kết nối lại tối đa");
+    setTimeout(() => {
+      reconnectAttempts = 0;
+      connectWebSocket();
+    }, 60000); // Thử lại sau 1 phút
     return;
   }
 
@@ -324,9 +239,21 @@ function connectWebSocket() {
     perMessageDeflate: false
   });
 
+  // Theo dõi độ trễ
+  latencyCheckTimer = setInterval(() => {
+    if (wsConnection.readyState === WebSocket.OPEN) {
+      const pingTime = Date.now();
+      wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalancedPlugin", { 
+        cmd: 2001, 
+        ping: pingTime 
+      }]));
+    }
+  }, 5000);
+
   wsConnection.on('open', () => {
     reconnectAttempts = 0;
     gameData.isConnected = true;
+    gameData.lastMessageTime = Date.now();
     console.log("✅ Kết nối thành công");
     
     const authData = [
@@ -344,7 +271,9 @@ function connectWebSocket() {
     
     // Yêu cầu lịch sử ban đầu
     setTimeout(() => {
-      wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 1001 }]));
+      if (wsConnection.readyState === WebSocket.OPEN) {
+        wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 1001 }]));
+      }
     }, 1000);
     
     // Heartbeat
@@ -357,13 +286,23 @@ function connectWebSocket() {
 
   wsConnection.on('message', (data) => {
     try {
+      gameData.lastMessageTime = Date.now();
       const json = JSON.parse(data);
+      
+      // Xử lý phản hồi kiểm tra độ trễ
+      if (Array.isArray(json) && json[3]?.res?.cmd === 2001 && json[3]?.res?.ping) {
+        gameData.latency = Date.now() - json[3].res.ping;
+        return;
+      }
       
       // Xử lý kết quả realtime
       if (Array.isArray(json) && json[3]?.res?.d1 !== undefined) {
         const res = json[3].res;
         
         if (!gameData.currentSession || res.sid > gameData.currentSession) {
+          // Kiểm tra timeout phiên trước đó
+          checkSessionTimeout();
+
           // Lưu phiên hiện tại vào lịch sử trước khi cập nhật
           if (gameData.pendingSession) {
             gameData.sessions.unshift({
@@ -372,7 +311,7 @@ function connectWebSocket() {
               d2: gameData.pendingSession.d2,
               d3: gameData.pendingSession.d3,
               result: ketQuaTX(gameData.pendingSession.d1, gameData.pendingSession.d2, gameData.pendingSession.d3),
-              timestamp: Date.now()
+              timestamp: gameData.pendingSession.timestamp
             });
             
             // Giới hạn lịch sử
@@ -394,7 +333,7 @@ function connectWebSocket() {
           gameData.currentConfidence = Math.floor(Math.random() * (97 - 51 + 1)) + 51;
           gameData.lastUpdate = Date.now();
           
-          console.log(`🎲 Phiên mới ${res.sid}: ${res.d1},${res.d2},${res.d3} → ${ketQuaTX(res.d1, res.d2, res.d3)}`);
+          console.log(`🎲 Phiên mới ${res.sid}: ${res.d1},${res.d2},${res.d3} → ${ketQuaTX(res.d1, res.d2, res.d3)} | Độ trễ: ${gameData.latency}ms`);
         }
       }
       // Xử lý lịch sử
@@ -437,6 +376,9 @@ function connectWebSocket() {
 // API Endpoint
 fastify.get("/api/789club", async (request, reply) => {
   try {
+    // Kiểm tra timeout phiên
+    checkSessionTimeout();
+
     // Tổng hợp dữ liệu từ phiên đang chờ và lịch sử
     const allResults = [
       ...(gameData.pendingSession ? [{
@@ -450,7 +392,8 @@ fastify.get("/api/789club", async (request, reply) => {
       return reply.status(200).send({
         status: "waiting",
         message: "Đang chờ dữ liệu phiên...",
-        is_connected: gameData.isConnected
+        is_connected: gameData.isConnected,
+        latency: gameData.latency
       });
     }
 
@@ -474,7 +417,9 @@ fastify.get("/api/789club", async (request, reply) => {
       last_update: gameData.lastUpdate,
       server_time: Date.now(),
       is_live: !!gameData.pendingSession,
-      is_connected: gameData.isConnected
+      is_connected: gameData.isConnected,
+      latency: gameData.latency,
+      last_message: gameData.lastMessageTime
     };
   } catch (err) {
     console.error("Lỗi API:", err);
@@ -489,6 +434,14 @@ fastify.get("/api/789club", async (request, reply) => {
 // Khởi động
 connectWebSocket();
 
+// Kiểm tra kết nối định kỳ
+setInterval(() => {
+  if (gameData.isConnected && (Date.now() - gameData.lastMessageTime) > 15000) {
+    console.warn("⚠️ Không nhận được dữ liệu trong 15 giây, đóng kết nối...");
+    wsConnection.close();
+  }
+}, 5000);
+
 fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
   if (err) {
     console.error("Lỗi khởi động server:", err);
@@ -501,5 +454,6 @@ process.on("SIGINT", () => {
   console.log("🛑 Đang tắt server...");
   if (wsConnection) wsConnection.close();
   clearInterval(heartbeatTimer);
+  clearInterval(latencyCheckTimer);
   fastify.close(() => process.exit(0));
 });

@@ -1,17 +1,39 @@
 const Fastify = require("fastify");
-const cors = require("@fastify/cors");
 const WebSocket = require("ws");
 
-const fastify = Fastify({ logger: false });
+const fastify = Fastify({ 
+  logger: false,
+  bodyLimit: 1048576 * 10
+});
+
 const PORT = process.env.PORT || 3002;
+const WS_URL = "wss://websocket.atpman.net/websocket";
+const HEARTBEAT_INTERVAL = 3000;
+const MAX_RECONNECT_ATTEMPTS = 10;
 
-let rikResults = [];
-let rikCurrentSession = null;
-let rikWS = null;
-let rikIntervalCmd = null;
-let currentConfidence = Math.floor(Math.random() * (97 - 51 + 1)) + 51; // Initialize with random confidence
+// Cấu hình WebSocket headers
+const WS_HEADERS = {
+  "Host": "websocket.atpman.net",
+  "Origin": "https://play.789club.sx",
+  "User-Agent": "Mozilla/5.0",
+  "Accept-Encoding": "gzip, deflate, br, zstd",
+  "Accept-Language": "vi-VN,vi;q=0.9",
+  "Pragma": "no-cache",
+  "Cache-Control": "no-cache"
+};
 
-const duDoanMap = {
+// Biến lưu trữ dữ liệu
+let gameData = {
+  sessions: [],
+  currentSession: null,
+  pendingSession: null,
+  lastUpdate: Date.now(),
+  currentConfidence: Math.floor(Math.random() * (97 - 51 + 1)) + 51,
+  isConnected: false
+};
+
+// Bản đồ dự đoán (giữ nguyên)
+const duDoanMap = {  
   "TXT": "Xỉu", 
   "TTXX": "Tài", 
   "XXTXX": "Tài", 
@@ -266,28 +288,48 @@ const duDoanMap = {
   "XXXXXXX": "Tài"
 };
 
-function duDoanTuTT(tt) {
-  return duDoanMap[tt] || "";
-}
-
-function getTX(d1, d2, d3) {
-  const sum = d1 + d2 + d3;
-  return sum >= 11 ? "T" : "X";
-}
-
-function sendRikCmd1005() {
-  if (rikWS && rikWS.readyState === WebSocket.OPEN) {
-    const payload = [6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 2000 }];
-    rikWS.send(JSON.stringify(payload));
+function duDoanTuTT(pattern) {
+  for (let len = Math.min(pattern.length, 7); len >= 1; len--) {
+    const key = pattern.substring(0, len);
+    if (duDoanMap[key]) return duDoanMap[key];
   }
+  return pattern[0] === "T" ? "Tài" : "Xỉu";
 }
 
-function connectRikWebSocket() {
-  console.log("🔌 Connecting to SunWin WebSocket...");
-  rikWS = new WebSocket("wss://websocket.atpman.net/websocket");
+function ketQuaTX(d1, d2, d3) {
+  return (d1 + d2 + d3) >= 11 ? "T" : "X";
+}
 
-  rikWS.on("open", () => {
-    const authPayload = [
+function connectWebSocket() {
+  if (wsConnection) {
+    wsConnection.removeAllListeners();
+    if (wsConnection.readyState !== WebSocket.CLOSED) {
+      wsConnection.close();
+    }
+  }
+
+  clearInterval(heartbeatTimer);
+
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    console.error("Đã đạt số lần kết nối lại tối đa");
+    return;
+  }
+
+  reconnectAttempts++;
+  console.log(`Đang kết nối... (lần thử ${reconnectAttempts})`);
+
+  // Tạo kết nối WebSocket với headers
+  wsConnection = new WebSocket(WS_URL, {
+    headers: WS_HEADERS,
+    perMessageDeflate: false
+  });
+
+  wsConnection.on('open', () => {
+    reconnectAttempts = 0;
+    gameData.isConnected = true;
+    console.log("✅ Kết nối thành công");
+    
+    const authData = [
       1,
       "MiniGame",
       "dfghhhgffgggg",
@@ -297,112 +339,167 @@ function connectRikWebSocket() {
         signature: "52830A25058B665F9A929FD75A80E6893BCD7DDB2BA3276B132BC863453AA09AE60B66FBE4B25F3892B27492391BF08F30D2DDD84B140F0007F1630BC6727A45543749ED892B94D78FEC9683FCF9A15F4EF582D8E4D9F7DD85AFD3BAE566A7B886F7DC380DA10EF5527C38BEE9E4F06C95B9612105CC1B2545C2A13644A29F1F"
       }
     ];
-    rikWS.send(JSON.stringify(authPayload));
-    clearInterval(rikIntervalCmd);
-    rikIntervalCmd = setInterval(sendRikCmd1005, 5000);
+    
+    wsConnection.send(JSON.stringify(authData));
+    
+    // Yêu cầu lịch sử ban đầu
+    setTimeout(() => {
+      wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 1001 }]));
+    }, 1000);
+    
+    // Heartbeat
+    heartbeatTimer = setInterval(() => {
+      if (wsConnection.readyState === WebSocket.OPEN) {
+        wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 2000 }]));
+      }
+    }, HEARTBEAT_INTERVAL);
   });
 
-  rikWS.on("message", (data) => {
+  wsConnection.on('message', (data) => {
     try {
       const json = JSON.parse(data);
-
-      // Nhận phiên mới realtime
-      if (Array.isArray(json) && json[3]?.res?.d1 && json[3]?.res?.sid) {
-        const result = json[3].res;
+      
+      // Xử lý kết quả realtime
+      if (Array.isArray(json) && json[3]?.res?.d1 !== undefined) {
+        const res = json[3].res;
         
-        // Only update if the new session ID is greater than current
-        if (!rikCurrentSession || result.sid > rikCurrentSession) {
-          rikCurrentSession = result.sid;
-          currentConfidence = Math.floor(Math.random() * (97 - 51 + 1)) + 51; // Update confidence
+        if (!gameData.currentSession || res.sid > gameData.currentSession) {
+          // Lưu phiên hiện tại vào lịch sử trước khi cập nhật
+          if (gameData.pendingSession) {
+            gameData.sessions.unshift({
+              sid: gameData.pendingSession.sid,
+              d1: gameData.pendingSession.d1,
+              d2: gameData.pendingSession.d2,
+              d3: gameData.pendingSession.d3,
+              result: ketQuaTX(gameData.pendingSession.d1, gameData.pendingSession.d2, gameData.pendingSession.d3),
+              timestamp: Date.now()
+            });
+            
+            // Giới hạn lịch sử
+            if (gameData.sessions.length > 50) {
+              gameData.sessions.pop();
+            }
+          }
 
-          // Thêm phiên mới nhất vào đầu danh sách
-          rikResults.unshift({
-            sid: result.sid,
-            d1: result.d1,
-            d2: result.d2,
-            d3: result.d3
-          });
-
-          // Giới hạn tối đa 50 kết quả
-          if (rikResults.length > 50) rikResults.pop();
-
-          console.log(`📥 Phiên mới ${result.sid} → ${getTX(result.d1, result.d2, result.d3)}`);
+          // Cập nhật phiên mới
+          gameData.pendingSession = {
+            sid: res.sid,
+            d1: res.d1,
+            d2: res.d2,
+            d3: res.d3,
+            timestamp: Date.now()
+          };
+          
+          gameData.currentSession = res.sid;
+          gameData.currentConfidence = Math.floor(Math.random() * (97 - 51 + 1)) + 51;
+          gameData.lastUpdate = Date.now();
+          
+          console.log(`🎲 Phiên mới ${res.sid}: ${res.d1},${res.d2},${res.d3} → ${ketQuaTX(res.d1, res.d2, res.d3)}`);
         }
       }
-
-      // Nhận lịch sử ban đầu
+      // Xử lý lịch sử
       else if (Array.isArray(json) && json[1]?.htr) {
-        const history = json[1].htr
-          .map((item) => ({
-            sid: item.sid,
-            d1: item.d1,
-            d2: item.d2,
-            d3: item.d3,
+        gameData.sessions = json[1].htr
+          .filter(x => x.d1 !== undefined)
+          .map(x => ({
+            sid: x.sid,
+            d1: x.d1,
+            d2: x.d2,
+            d3: x.d3,
+            result: ketQuaTX(x.d1, x.d2, x.d3),
+            timestamp: Date.now()
           }))
-          .sort((a, b) => b.sid - a.sid); // Sort descending by session ID
-
-        rikResults = history.slice(0, 50); // Only keep latest 50
-        console.log("📦 Đã tải lịch sử các phiên gần nhất.");
-        
-        // Initialize confidence if not set
-        if (!currentConfidence) {
-          currentConfidence = Math.floor(Math.random() * (97 - 51 + 1)) + 51;
+          .sort((a, b) => b.sid - a.sid)
+          .slice(0, 50);
+          
+        if (gameData.sessions.length > 0) {
+          gameData.currentSession = gameData.sessions[0].sid;
         }
+        console.log(`📚 Đã tải ${gameData.sessions.length} phiên lịch sử`);
       }
-
-    } catch (e) {
-      console.error("❌ Parse error:", e.message);
+    } catch (error) {
+      console.error("❌ Lỗi xử lý dữ liệu:", error.message);
     }
   });
 
-  // ... (keep the rest of your WebSocket event handlers)
+  wsConnection.on('close', () => {
+    gameData.isConnected = false;
+    console.log("🔌 Mất kết nối, đang thử kết nối lại...");
+    setTimeout(connectWebSocket, 5000);
+  });
+
+  wsConnection.on('error', (err) => {
+    gameData.isConnected = false;
+    console.error("❌ Lỗi kết nối:", err.message);
+  });
 }
 
-connectRikWebSocket();
+// API Endpoint
+fastify.get("/api/789club", async (request, reply) => {
+  try {
+    // Tổng hợp dữ liệu từ phiên đang chờ và lịch sử
+    const allResults = [
+      ...(gameData.pendingSession ? [{
+        ...gameData.pendingSession,
+        result: ketQuaTX(gameData.pendingSession.d1, gameData.pendingSession.d2, gameData.pendingSession.d3)
+      }] : []),
+      ...gameData.sessions
+    ];
 
-fastify.register(cors);
+    if (allResults.length < 2) {
+      return reply.status(200).send({
+        status: "waiting",
+        message: "Đang chờ dữ liệu phiên...",
+        is_connected: gameData.isConnected
+      });
+    }
 
-fastify.get("/api/789club", async () => {
-  const validResults = rikResults.filter(item => item.d1 && item.d2 && item.d3);
+    const phienHienTai = allResults[0];
+    const phienTruoc = allResults[1];
+    
+    // Tạo chuỗi lịch sử cho phân tích
+    const lichSuTX = allResults.map(p => p.result).join("");
+    const pattern = lichSuTX.substring(0, 6);
 
-  if (validResults.length < 2) {
-    return { message: "Không đủ dữ liệu." };
+    return {
+      status: "success",
+      phien_truoc: phienTruoc.sid,
+      xuc_xac: [phienHienTai.d1, phienHienTai.d2, phienHienTai.d3],
+      ket_qua: phienHienTai.result,
+      phien_hien_tai: phienHienTai.sid,
+      du_doan: duDoanTuTT(pattern),
+      do_tin_cay: `${gameData.currentConfidence}%`,
+      cau: lichSuTX.substring(0, 15),
+      thuat_toan: pattern,
+      last_update: gameData.lastUpdate,
+      server_time: Date.now(),
+      is_live: !!gameData.pendingSession,
+      is_connected: gameData.isConnected
+    };
+  } catch (err) {
+    console.error("Lỗi API:", err);
+    return reply.status(500).send({
+      status: "error",
+      message: "Lỗi hệ thống",
+      error: err.message
+    });
   }
-
-  // Ensure confidence is never null
-  if (!currentConfidence) {
-    currentConfidence = Math.floor(Math.random() * (97 - 51 + 1)) + 51;
-  }
-
-  const current = validResults[0];
-  const previous = validResults[1];
-
-  const ket_qua = getTX(current.d1, current.d2, current.d3);
-  const lich_su_TX = validResults.map(item => getTX(item.d1, item.d2, item.d3)).join("");
-  const cau = lich_su_TX.substring(0, 15);
-  const tt = lich_su_TX.substring(0, 6);
-  const du_doan = duDoanTuTT(tt);
-
-  return {
-    phien_truoc: previous.sid,
-    xuc_xac: [current.d1, current.d2, current.d3],
-    ket_qua: ket_qua,
-    phien_hien_tai: current.sid,
-    du_doan: du_doan,
-    do_tin_cay: `${currentConfidence}%`,
-    cau: cau,
-    thuat_toan: tt
-  };
 });
 
-const start = async () => {
-  try {
-    const address = await fastify.listen({ port: PORT, host: "0.0.0.0" });
-    console.log(`🚀 API chạy tại ${address}`);
-  } catch (err) {
-    console.error("❌ Server error:", err);
+// Khởi động
+connectWebSocket();
+
+fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
+  if (err) {
+    console.error("Lỗi khởi động server:", err);
     process.exit(1);
   }
-};
+  console.log(`🚀 Server đang chạy trên cổng ${PORT}`);
+});
 
-start();
+process.on("SIGINT", () => {
+  console.log("🛑 Đang tắt server...");
+  if (wsConnection) wsConnection.close();
+  clearInterval(heartbeatTimer);
+  fastify.close(() => process.exit(0));
+});

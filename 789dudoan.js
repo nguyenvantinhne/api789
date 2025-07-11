@@ -35,7 +35,7 @@ let gameData = {
 
 // Bản đồ dự đoán (giữ nguyên)
 const duDoanMap = {
-  "TXT": "Xỉu", 
+    "TXT": "Xỉu", 
   "TTXX": "Tài", 
   "XXTXX": "Tài", 
   "TTX": "Xỉu", 

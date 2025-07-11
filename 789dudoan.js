@@ -240,7 +240,7 @@ async function readCauLog() {
 // --- Kết nối WebSocket và xử lý dữ liệu (Kết nối tới Sunwin) ---
 function sendCmd1005() {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    const payload = [6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 2000 }];
+    const payload = [6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 1105 }];
     ws.send(JSON.stringify(payload));
   }
 }
@@ -513,7 +513,7 @@ async function broadcastPrediction() {
 
 
 function connectWebSocket() {
-    ws = new WebSocket('wss://api.apixoc88.net/websocket?d= YW05aGJtUm9hUT09fDI1NHwxNzUyMTcxMTU0NTA0fDUyYjM3MWFiYTY4NDAzMTg2MTM1MTdiNThkZTNjMTY3fGJmNDJiYTY1MGIyZWFlNTgwZGJjNWZmMjlhMWMxOTky');
+    ws = new WebSocket('wss://api.apixoc88.net/websocket?d= Ym5CaWJIQmlhV2M9fDE1OHwxNzUyMjMxMjQzOTc0fDU5OGIyMzM4NTRkYjc5Y2VhNTU2MTZmMmZiNDE4ZDI1fGFiODNhNjI3MDJhNGFmZDYwYzQyMmFlNTM4NGQ5NWQ0');
 
   ws.on("open", () => {
     console.log("Đã kết nối WebSocket thành công đến Sunwin.");

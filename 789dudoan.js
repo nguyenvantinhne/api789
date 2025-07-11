@@ -11,6 +11,7 @@ const WS_URL = "wss://websocket.atpman.net/websocket";
 const HEARTBEAT_INTERVAL = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
+// Cấu hình WebSocket headers
 const WS_HEADERS = {
   "Host": "websocket.atpman.net",
   "Origin": "https://play.789club.sx",
@@ -24,8 +25,9 @@ const WS_HEADERS = {
 // Biến lưu trữ dữ liệu
 let gameData = {
   sessions: [],
-  currentSession: null,
-  pendingSession: null,
+  currentSession: null,       // Phiên realtime từ WS (phien_truoc)
+  nextSession: null,         // Phiên hiện tại (phien_hien_tai = phien_truoc + 1)
+  pendingResult: null,       // Kết quả xúc xắc đang chờ
   lastUpdate: Date.now(),
   currentConfidence: Math.floor(Math.random() * (97 - 51 + 1)) + 51,
   isConnected: false,
@@ -35,11 +37,45 @@ let gameData = {
 
 // Bản đồ dự đoán
 const duDoanMap = {
-  // ... (giữ nguyên bản đồ dự đoán như trước)
+  "TTTTTT": "Xỉu", "TTTTTX": "Xỉu", "TTTTXT": "Xỉu", "TTTTXX": "Tài",
+  "TTTXTT": "Xỉu", "TTTXTX": "Tài", "TTTXXT": "Tài", "TTTXXX": "Xỉu",
+  "TTXTTT": "Xỉu", "TTXTTX": "Tài", "TTXTXT": "Tài", "TTXTXX": "Xỉu",
+  "TTXXTT": "Tài", "TTXXTX": "Xỉu", "TTXXXT": "Xỉu", "TTXXXX": "Tài",
+  "TXTTTT": "Xỉu", "TXTTTX": "Tài", "TXTTXT": "Tài", "TXTTXX": "Xỉu",
+  "TXTXTT": "Tài", "TXTXTX": "Xỉu", "TXTXXT": "Xỉu", "TXTXXX": "Tài",
+  "TXXTTT": "Tài", "TXXTTX": "Xỉu", "TXXTXT": "Xỉu", "TXXTXX": "Tài",
+  "TXXXTT": "Xỉu", "TXXXTX": "Tài", "TXXXXT": "Tài", "TXXXXX": "Xỉu",
+  "XTTTTT": "Tài", "XTTTTX": "Xỉu", "XTTTXT": "Xỉu", "XTTTXX": "Tài",
+  "XTTXTT": "Xỉu", "XTTXTX": "Tài", "XTTXXT": "Tài", "XTTXXX": "Xỉu",
+  "XTXTTT": "Xỉu", "XTXTTX": "Tài", "XTXTXT": "Tài", "XTXTXX": "Xỉu",
+  "XTXXTT": "Tài", "XTXXTX": "Xỉu", "XTXXXT": "Xỉu", "XTXXXX": "Tài",
+  "XXTTTT": "Xỉu", "XXTTTX": "Tài", "XXTTXT": "Tài", "XXTTXX": "Xỉu",
+  "XXTXTT": "Tài", "XXTXTX": "Xỉu", "XXTXXT": "Xỉu", "XXTXXX": "Tài",
+  "XXXTTT": "Tài", "XXXTTX": "Xỉu", "XXXTXT": "Xỉu", "XXXTXX": "Tài",
+  "XXXXTT": "Xỉu", "XXXXTX": "Tài", "XXXXXT": "Tài", "XXXXXX": "Xỉu",
+  // Các mẫu ngắn hơn
+  "TTTTT": "Xỉu", "TTTTX": "Xỉu", "TTTXT": "Xỉu", "TTTXX": "Tài",
+  "TTXTT": "Xỉu", "TTXTX": "Tài", "TTXXT": "Tài", "TTXXX": "Xỉu",
+  "TXTTT": "Xỉu", "TXTTX": "Tài", "TXTXT": "Tài", "TXTXX": "Xỉu",
+  "TXXTT": "Tài", "TXXTX": "Xỉu", "TXXXT": "Xỉu", "TXXXX": "Tài",
+  "XTTTT": "Xỉu", "XTTTX": "Tài", "XTTXT": "Tài", "XTTXX": "Xỉu",
+  "XTXTT": "Tài", "XTXTX": "Xỉu", "XTXXT": "Xỉu", "XTXXX": "Tài",
+  "XXTTT": "Tài", "XXTTX": "Xỉu", "XXTXT": "Xỉu", "XXTXX": "Tài",
+  "XXXTT": "Xỉu", "XXXTX": "Tài", "XXXXT": "Tài", "XXXXX": "Xỉu",
+  // Các mẫu ngắn hơn nữa
+  "TTTT": "Xỉu", "TTTX": "Xỉu", "TTXT": "Xỉu", "TTXX": "Tài",
+  "TXTT": "Xỉu", "TXTX": "Tài", "TXXT": "Tài", "TXXX": "Xỉu",
+  "XTTT": "Xỉu", "XTTX": "Tài", "XTXT": "Tài", "XTXX": "Xỉu",
+  "XXTT": "Tài", "XXTX": "Xỉu", "XXXT": "Xỉu", "XXXX": "Tài",
+  // Các mẫu ngắn nhất
+  "TTT": "Xỉu", "TTX": "Xỉu", "TXT": "Tài", "TXX": "Tài",
+  "XTT": "Xỉu", "XTX": "Tài", "XXT": "Xỉu", "XXX": "Tài",
+  "TT": "Xỉu", "TX": "Tài", "XT": "Tài", "XX": "Xỉu",
+  "T": "Tài", "X": "Xỉu"
 };
 
 function duDoanTuTT(pattern) {
-  for (let len = Math.min(pattern.length, 7); len >= 1; len--) {
+  for (let len = Math.min(pattern.length, 6); len >= 1; len--) {
     const key = pattern.substring(0, len);
     if (duDoanMap[key]) return duDoanMap[key];
   }
@@ -134,44 +170,42 @@ function connectWebSocket() {
         return;
       }
       
-      // Xử lý kết quả realtime - FIXED: Đồng bộ phiên chuẩn
+      // Xử lý kết quả realtime
       if (Array.isArray(json) && json[3]?.res?.d1 !== undefined) {
         const res = json[3].res;
         
-        // Nếu là phiên mới hoặc chưa có phiên nào
-        if (!gameData.currentSession || res.sid > gameData.currentSession) {
-          // Đẩy phiên hiện tại vào lịch sử nếu tồn tại
-          if (gameData.pendingSession) {
-            gameData.sessions.unshift({
-              sid: gameData.pendingSession.sid,
-              d1: gameData.pendingSession.d1,
-              d2: gameData.pendingSession.d2,
-              d3: gameData.pendingSession.d3,
-              result: ketQuaTX(gameData.pendingSession.d1, gameData.pendingSession.d2, gameData.pendingSession.d3),
-              timestamp: gameData.pendingSession.timestamp
-            });
-            
-            if (gameData.sessions.length > 50) {
-              gameData.sessions.pop();
-            }
-          }
-          
-          // Cập nhật phiên mới
-          gameData.currentSession = res.sid;
-          gameData.currentConfidence = Math.floor(Math.random() * (97 - 51 + 1)) + 51;
-        }
+        // Cập nhật phiên realtime (phien_truoc)
+        gameData.currentSession = res.sid;
         
-        // LUÔN cập nhật dữ liệu phiên hiện tại
-        gameData.pendingSession = {
-          sid: res.sid,
+        // Tạo phiên hiện tại (phien_hien_tai = phien_truoc + 1)
+        gameData.nextSession = res.sid + 1;
+        
+        // Lưu kết quả đang chờ
+        gameData.pendingResult = {
           d1: res.d1,
-          d2: res.d2,
+          d2: res.d2, 
           d3: res.d3,
           timestamp: Date.now()
         };
         
+        // Đẩy kết quả cũ vào lịch sử nếu có
+        if (gameData.pendingResult) {
+          gameData.sessions.unshift({
+            sid: gameData.currentSession - 1, // Phiên trước đó
+            d1: gameData.pendingResult.d1,
+            d2: gameData.pendingResult.d2,
+            d3: gameData.pendingResult.d3,
+            result: ketQuaTX(gameData.pendingResult.d1, gameData.pendingResult.d2, gameData.pendingResult.d3),
+            timestamp: gameData.pendingResult.timestamp
+          });
+          
+          if (gameData.sessions.length > 50) {
+            gameData.sessions.pop();
+          }
+        }
+        
         gameData.lastUpdate = Date.now();
-        console.log(`🎲 Phiên ${res.sid}: ${res.d1},${res.d2},${res.d3} → ${ketQuaTX(res.d1, res.d2, res.d3)}`);
+        console.log(`🎲 Phiên ${gameData.currentSession} (realtime) → ${gameData.nextSession} (hiển thị) | ${res.d1},${res.d2},${res.d3} → ${ketQuaTX(res.d1, res.d2, res.d3)}`);
       }
       // Xử lý lịch sử
       else if (Array.isArray(json) && json[1]?.htr) {
@@ -190,6 +224,7 @@ function connectWebSocket() {
           
         if (gameData.sessions.length > 0) {
           gameData.currentSession = gameData.sessions[0].sid;
+          gameData.nextSession = gameData.currentSession + 1;
         }
         console.log(`📚 Đã tải ${gameData.sessions.length} phiên lịch sử`);
       }
@@ -210,14 +245,18 @@ function connectWebSocket() {
   });
 }
 
-// API Endpoint - FIXED: Định dạng chuẩn cho Robot Web
+// API Endpoint
 fastify.get("/api/789club", async (request, reply) => {
   try {
     // Tổng hợp dữ liệu
     const allResults = [
-      ...(gameData.pendingSession ? [{
-        ...gameData.pendingSession,
-        result: ketQuaTX(gameData.pendingSession.d1, gameData.pendingSession.d2, gameData.pendingSession.d3)
+      ...(gameData.pendingResult ? [{
+        sid: gameData.currentSession, // Sử dụng phiên realtime
+        d1: gameData.pendingResult.d1,
+        d2: gameData.pendingResult.d2,
+        d3: gameData.pendingResult.d3,
+        result: ketQuaTX(gameData.pendingResult.d1, gameData.pendingResult.d2, gameData.pendingResult.d3),
+        timestamp: gameData.pendingResult.timestamp
       }] : []),
       ...gameData.sessions
     ];
@@ -226,43 +265,36 @@ fastify.get("/api/789club", async (request, reply) => {
       return reply.status(200).send({
         status: "waiting",
         message: "Đang chờ dữ liệu phiên...",
-        is_connected: gameData.isConnected,
-        latency: gameData.latency
+        is_connected: gameData.isConnected
       });
     }
 
-    const phienHienTai = allResults[0];
-    const phienTruoc = allResults[1] || phienHienTai; // Fallback nếu không có phiên trước
+    const phienTruoc = allResults[0]; // Phiên realtime từ WS
+    const phienHienTai = gameData.nextSession || phienTruoc.sid + 1; // Luôn là phien_truoc + 1
     
-    // Tạo chuỗi lịch sử cho phân tích
+    // Tạo chuỗi lịch sử
     const lichSuTX = allResults.map(p => p.result).join("");
     const pattern = lichSuTX.substring(0, 6);
 
-    // Định dạng response chuẩn
-    const responseData = {
+    return {
       status: "success",
-      data: {
-        phien: {
-          hien_tai: phienHienTai.sid,
-          truoc: phienTruoc.sid
-        },
-        xuc_xac: [phienHienTai.d1, phienHienTai.d2, phienHienTai.d3],
-        ket_qua: phienHienTai.result,
-        du_doan: duDoanTuTT(pattern),
-        do_tin_cay: gameData.currentConfidence,
-        thong_tin: {
-          cau: lichSuTX.substring(0, 15),
-          thuat_toan: pattern,
-          update_time: gameData.lastUpdate,
-          server_time: Date.now(),
-          is_live: !!gameData.pendingSession,
-          is_connected: gameData.isConnected,
-          latency: gameData.latency
-        }
+      phien: {
+        truoc: phienTruoc.sid,     // Phiên realtime từ WS (không thay đổi)
+        hien_tai: phienHienTai     // Luôn là phien_truoc + 1
+      },
+      xuc_xac: [phienTruoc.d1, phienTruoc.d2, phienTruoc.d3],
+      ket_qua: phienTruoc.result,
+      du_doan: duDoanTuTT(pattern),
+      do_tin_cay: `${gameData.currentConfidence}%`,
+      thong_tin: {
+        cau: lichSuTX.substring(0, 15),
+        thuat_toan: pattern,
+        update_time: gameData.lastUpdate,
+        server_time: Date.now(),
+        is_connected: gameData.isConnected,
+        latency: gameData.latency
       }
     };
-
-    return reply.send(responseData);
   } catch (err) {
     console.error("Lỗi API:", err);
     return reply.status(500).send({

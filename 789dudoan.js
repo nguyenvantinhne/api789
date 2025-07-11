@@ -10,6 +10,7 @@ const PORT = process.env.PORT || 3002;
 const WS_URL = "wss://websocket.atpman.net/websocket";
 const HEARTBEAT_INTERVAL = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
+const MAX_SESSIONS = 100; // Giới hạn số phiên lịch sử lưu trữ
 
 // Cấu hình WebSocket headers
 const WS_HEADERS = {
@@ -32,46 +33,264 @@ let gameData = {
   currentConfidence: Math.floor(Math.random() * (97 - 51 + 1)) + 51,
   isConnected: false,
   lastMessageTime: Date.now(),
-  latency: 0
+  latency: 0,
+  isLive: false
 };
 
-// Bản đồ dự đoán
+// Bản đồ dự đoán (giữ nguyên)
 const duDoanMap = {
-  "TTTTTT": "Xỉu", "TTTTTX": "Xỉu", "TTTTXT": "Xỉu", "TTTTXX": "Tài",
-  "TTTXTT": "Xỉu", "TTTXTX": "Tài", "TTTXXT": "Tài", "TTTXXX": "Xỉu",
-  "TTXTTT": "Xỉu", "TTXTTX": "Tài", "TTXTXT": "Tài", "TTXTXX": "Xỉu",
-  "TTXXTT": "Tài", "TTXXTX": "Xỉu", "TTXXXT": "Xỉu", "TTXXXX": "Tài",
-  "TXTTTT": "Xỉu", "TXTTTX": "Tài", "TXTTXT": "Tài", "TXTTXX": "Xỉu",
-  "TXTXTT": "Tài", "TXTXTX": "Xỉu", "TXTXXT": "Xỉu", "TXTXXX": "Tài",
-  "TXXTTT": "Tài", "TXXTTX": "Xỉu", "TXXTXT": "Xỉu", "TXXTXX": "Tài",
-  "TXXXTT": "Xỉu", "TXXXTX": "Tài", "TXXXXT": "Tài", "TXXXXX": "Xỉu",
-  "XTTTTT": "Tài", "XTTTTX": "Xỉu", "XTTTXT": "Xỉu", "XTTTXX": "Tài",
-  "XTTXTT": "Xỉu", "XTTXTX": "Tài", "XTTXXT": "Tài", "XTTXXX": "Xỉu",
-  "XTXTTT": "Xỉu", "XTXTTX": "Tài", "XTXTXT": "Tài", "XTXTXX": "Xỉu",
-  "XTXXTT": "Tài", "XTXXTX": "Xỉu", "XTXXXT": "Xỉu", "XTXXXX": "Tài",
-  "XXTTTT": "Xỉu", "XXTTTX": "Tài", "XXTTXT": "Tài", "XXTTXX": "Xỉu",
-  "XXTXTT": "Tài", "XXTXTX": "Xỉu", "XXTXXT": "Xỉu", "XXTXXX": "Tài",
-  "XXXTTT": "Tài", "XXXTTX": "Xỉu", "XXXTXT": "Xỉu", "XXXTXX": "Tài",
-  "XXXXTT": "Xỉu", "XXXXTX": "Tài", "XXXXXT": "Tài", "XXXXXX": "Xỉu",
-  // Các mẫu ngắn hơn
-  "TTTTT": "Xỉu", "TTTTX": "Xỉu", "TTTXT": "Xỉu", "TTTXX": "Tài",
-  "TTXTT": "Xỉu", "TTXTX": "Tài", "TTXXT": "Tài", "TTXXX": "Xỉu",
-  "TXTTT": "Xỉu", "TXTTX": "Tài", "TXTXT": "Tài", "TXTXX": "Xỉu",
-  "TXXTT": "Tài", "TXXTX": "Xỉu", "TXXXT": "Xỉu", "TXXXX": "Tài",
-  "XTTTT": "Xỉu", "XTTTX": "Tài", "XTTXT": "Tài", "XTTXX": "Xỉu",
-  "XTXTT": "Tài", "XTXTX": "Xỉu", "XTXXT": "Xỉu", "XTXXX": "Tài",
-  "XXTTT": "Tài", "XXTTX": "Xỉu", "XXTXT": "Xỉu", "XXTXX": "Tài",
-  "XXXTT": "Xỉu", "XXXTX": "Tài", "XXXXT": "Tài", "XXXXX": "Xỉu",
-  // Các mẫu ngắn hơn nữa
-  "TTTT": "Xỉu", "TTTX": "Xỉu", "TTXT": "Xỉu", "TTXX": "Tài",
-  "TXTT": "Xỉu", "TXTX": "Tài", "TXXT": "Tài", "TXXX": "Xỉu",
-  "XTTT": "Xỉu", "XTTX": "Tài", "XTXT": "Tài", "XTXX": "Xỉu",
-  "XXTT": "Tài", "XXTX": "Xỉu", "XXXT": "Xỉu", "XXXX": "Tài",
-  // Các mẫu ngắn nhất
-  "TTT": "Xỉu", "TTX": "Xỉu", "TXT": "Tài", "TXX": "Tài",
-  "XTT": "Xỉu", "XTX": "Tài", "XXT": "Xỉu", "XXX": "Tài",
-  "TT": "Xỉu", "TX": "Tài", "XT": "Tài", "XX": "Xỉu",
-  "T": "Tài", "X": "Xỉu"
+  "TXT": "Xỉu", 
+  "TTXX": "Tài", 
+  "XXTXX": "Tài", 
+  "TTX": "Xỉu", 
+  "XTT": "Tài",
+  "TXX": "Tài", 
+  "XTX": "Xỉu", 
+  "TXTX": "Tài", 
+  "XTXX": "Tài", 
+  "XXTX": "Tài",
+  "TXTT": "Xỉu", 
+  "TTT": "Tài", 
+  "XXX": "Tài", 
+  "TXXT": "Tài", 
+  "XTXT": "Xỉu",
+  "TXXT": "Tài", 
+  "XXTT": "Tài", 
+  "TTXX": "Xỉu", 
+  "XTTX": "Tài", 
+  "XTXTX": "Tài",
+  "TTXXX": "Tài", 
+  "XTTXT": "Tài", 
+  "XXTXT": "Xỉu", 
+  "TXTTX": "Tài", 
+  "XTXXT": "Tài",
+  "TTTXX": "Xỉu", 
+  "XXTTT": "Tài", 
+  "XTXTT": "Tài", 
+  "TXTXT": "Tài", 
+  "TTXTX": "Xỉu",
+  "TXTTT": "Xỉu", 
+  "XXTXTX": "Tài", 
+  "XTXXTX": "Tài", 
+  "TXTTTX": "Tài", 
+  "TTTTXX": "Xỉu",
+  "XTXTTX": "Tài", 
+  "XTXXTT": "Tài", 
+  "TXXTXX": "Tài", 
+  "XXTXXT": "Tài", 
+  "TXTTXX": "Xỉu",
+  "TTTXTX": "Xỉu", 
+  "TTXTTT": "Tài", 
+  "TXXTTX": "Tài", 
+  "XXTTTX": "Tài", 
+  "XTTTTX": "Xỉu",
+  "TXTXTT": "Tài", 
+  "TXTXTX": "Tài", 
+  "TTTTX": "Tài", 
+  "XXXTX": "Tài", 
+  "TXTTTX": "Xỉu",
+  "XTXXXT": "Tài", 
+  "XXTTXX": "Tài", 
+  "TTTXXT": "Xỉu", 
+  "XXTXXX": "Tài", 
+  "XTXTXT": "Tài",
+  "TTXXTX": "Tài", 
+  "TTXXT": "Tài", 
+  "TXXTX": "Xỉu", 
+  "XTXXX": "Tài", 
+  "XTXTX": "Xỉu",
+  "TTXT": "Xỉu", 
+  "TTTXT": "Xỉu",
+  "TTTT": "Tài",
+  "TTTTT": "Tài",
+  "TTTTTT": "Xỉu",
+  "TTTTTTT": "Tài",
+  "TTTTTTX": "Xỉu",
+  "TTTTTX": "Xỉu",
+  "TTTTTXT": "Xỉu",
+  "TTTTTXX": "Tài",
+  "TTTTXT": "Xỉu",
+  "TTTTXTT": "Tài",
+  "TTTTXTX": "Xỉu",
+  "TTTTXXT": "Xỉu",
+  "TTTTXXX": "Tài",
+  "TTTX": "Xỉu",
+  "TTTXTT": "Tài",
+  "TTTXTTT": "Xỉu",
+  "TTTXTTX": "Xỉu",
+  "TTTXTXT": "Tài",
+  "TTTXTXX": "Tài",
+  "TTTXXTT": "Tài",
+  "TTTXXTX": "Tài",
+  "TTTXXX": "Xỉu",
+  "TTTXXXT": "Tài",
+  "TTTXXXX": "Xỉu",
+  "TTXTT": "Xỉu",
+  "TTXTTTT": "Xỉu",
+  "TTXTTTX": "Xỉu",
+  "TTXTTX": "Tài",
+  "TTXTTXT": "Tài",
+  "TTXTTXX": "Xỉu",
+  "TTXTXT": "Xỉu",
+  "TTXTXTT": "Tài",
+  "TTXTXTX": "Tài",
+  "TTXTXX": "Xỉu",
+  "TTXTXXT": "Tài",
+  "TTXTXXX": "Xỉu",
+  "TTXXTT": "Tài",
+  "TTXXTTT": "Xỉu",
+  "TTXXTTX": "Tài",
+  "TTXXTXT": "Tài",
+  "TTXXTXX": "Xỉu",
+  "TTXXXT": "Xỉu",
+  "TTXXXTT": "Tài",
+  "TTXXXTX": "Tài",
+  "TTXXXX": "Xỉu",
+  "TTXXXXT": "Tài",
+  "TTXXXXX": "Xỉu",
+  "TXTTTT": "Xỉu",
+  "TXTTTTT": "Xỉu",
+  "TXTTTTX": "Xỉu",
+  "TXTTTXT": "Xỉu",
+  "TXTTTXX": "Tài",
+  "TXTTXT": "Tài",
+  "TXTTXTT": "Tài",
+  "TXTTXTX": "Tài",
+  "TXTTXXT": "Tài",
+  "TXTTXXX": "Tài",
+  "TXTXTTT": "Tài",
+  "TXTXTTX": "Tài",
+  "TXTXTXT": "Xỉu",
+  "TXTXTXX": "Tài",
+  "TXTXX": "Tài",
+  "TXTXXT": "Tài",
+  "TXTXXTT": "Tài",
+  "TXTXXTX": "Xỉu",
+  "TXTXXX": "Xỉu",
+  "TXTXXXT": "Xỉu",
+  "TXTXXXX": "Xỉu",
+  "TXXTT": "Tài",
+  "TXXTTT": "Tài",
+  "TXXTTTT": "Tài",
+  "TXXTTTX": "Tài",
+  "TXXTTXT": "Xỉu",
+  "TXXTTXX": "Xỉu",
+  "TXXTXT": "Tài",
+  "TXXTXTT": "Tài",
+  "TXXTXTX": "Tài",
+  "TXXTXXT": "Tài",
+  "TXXTXXX": "Xỉu",
+  "TXXX": "Tài",
+  "TXXXT": "Tài",
+  "TXXXTT": "Xỉu",
+  "TXXXTTT": "Tài",
+  "TXXXTTX": "Xỉu",
+  "TXXXTX": "Xỉu",
+  "TXXXTXT": "Tài",
+  "TXXXTXX": "Xỉu",
+  "TXXXX": "Xỉu",
+  "TXXXXT": "Tài",
+  "TXXXXTT": "Xỉu",
+  "TXXXXTX": "Xỉu",
+  "TXXXXX": "Tài",
+  "TXXXXXT": "Xỉu",
+  "TXXXXXX": "Xỉu",
+  "XTTT": "Xỉu",
+  "XTTTT": "Xỉu",
+  "XTTTTT": "Tài",
+  "XTTTTTT": "Tài",
+  "XTTTTTX": "Tài",
+  "XTTTTXT": "Tài",
+  "XTTTTXX": "Xỉu",
+  "XTTTX": "Tài",
+  "XTTTXT": "Xỉu",
+  "XTTTXTT": "Tài",
+  "XTTTXTX": "Xỉu",
+  "XTTTXX": "Tài",
+  "XTTTXXT": "Tài",
+  "XTTTXXX": "Tài",
+  "XTTXTT": "Tài",
+  "XTTXTTT": "Tài",
+  "XTTXTTX": "Tài",
+  "XTTXTX": "Xỉu",
+  "XTTXTXT": "Tài",
+  "XTTXTXX": "Xỉu",
+  "XTTXX": "Xỉu",
+  "XTTXXT": "Xỉu",
+  "XTTXXTT": "Tài",
+  "XTTXXTX": "Xỉu",
+  "XTTXXX": "Tài",
+  "XTTXXXT": "Xỉu",
+  "XTTXXXX": "Tài",
+  "XTXTTT": "Tài",
+  "XTXTTTT": "Tài",
+  "XTXTTTX": "Xỉu",
+  "XTXTTXT": "Xỉu",
+  "XTXTTXX": "Tài",
+  "XTXTXTT": "Tài",
+  "XTXTXTX": "Xỉu",
+  "XTXTXX": "Tài",
+  "XTXTXXT": "Tài",
+  "XTXTXXX": "Tài",
+  "XTXXTTT": "Tài",
+  "XTXXTTX": "Xỉu",
+  "XTXXTXT": "Tài",
+  "XTXXTXX": "Tài",
+  "XTXXXTT": "Xỉu",
+  "XTXXXTX": "Tài",
+  "XTXXXX": "Xỉu",
+  "XTXXXXT": "Tài",
+  "XTXXXXX": "Tài",
+  "XXT": "Xỉu",
+  "XXTTTT": "Tài",
+  "XXTTTTT": "Xỉu",
+  "XXTTTTX": "Tài",
+  "XXTTTXT": "Xỉu",
+  "XXTTTXX": "Xỉu",
+  "XXTTX": "Tài",
+  "XXTTXT": "Xỉu",
+  "XXTTXTT": "Xỉu",
+  "XXTTXTX": "Tài",
+  "XXTTXXT": "Xỉu",
+  "XXTTXXX": "Tài",
+  "XXTXTT": "Tài",
+  "XXTXTTT": "Tài",
+  "XXTXTTX": "Xỉu",
+  "XXTXTXT": "Tài",
+  "XXTXTXX": "Tài",
+  "XXTXXTT": "Xỉu",
+  "XXTXXTX": "Xỉu",
+  "XXTXXXT": "Tài",
+  "XXTXXXX": "Tài",
+  "XXXT": "Tài",
+  "XXXTT": "Xỉu",
+  "XXXTTT": "Xỉu",
+  "XXXTTTT": "Xỉu",
+  "XXXTTTX": "Xỉu",
+  "XXXTTX": "Tài",
+  "XXXTTXT": "Xỉu",
+  "XXXTTXX": "Xỉu",
+  "XXXTXT": "Tài",
+  "XXXTXTT": "Tài",
+  "XXXTXTX": "Xỉu",
+  "XXXTXX": "Tài",
+  "XXXTXXT": "Xỉu",
+  "XXXTXXX": "Tài",
+  "XXXX": "Tài",
+  "XXXXT": "Xỉu",
+  "XXXXTT": "Xỉu",
+  "XXXXTTT": "Tài",
+  "XXXXTTX": "Tài",
+  "XXXXTX": "Tài",
+  "XXXXTXT": "Tài",
+  "XXXXTXX": "Tài",
+  "XXXXX": "Tài",
+  "XXXXXT": "Xỉu",
+  "XXXXXTT": "Tài",
+  "XXXXXTX": "Tài",
+  "XXXXXX": "Tài",
+  "XXXXXXT": "Tài",
+  "XXXXXXX": "Tài"
 };
 
 function duDoanTuTT(pattern) {
@@ -83,7 +302,11 @@ function duDoanTuTT(pattern) {
 }
 
 function ketQuaTX(d1, d2, d3) {
-  return (d1 + d2 + d3) >= 11 ? "T" : "X";
+  const tong = d1 + d2 + d3;
+  return {
+    result: tong >= 11 ? "T" : "X",
+    tong: tong
+  };
 }
 
 let wsConnection = null;
@@ -173,6 +396,7 @@ function connectWebSocket() {
       // Xử lý kết quả realtime
       if (Array.isArray(json) && json[3]?.res?.d1 !== undefined) {
         const res = json[3].res;
+        const ketQua = ketQuaTX(res.d1, res.d2, res.d3);
         
         // Cập nhật phiên realtime (phien_truoc)
         gameData.currentSession = res.sid;
@@ -185,8 +409,12 @@ function connectWebSocket() {
           d1: res.d1,
           d2: res.d2, 
           d3: res.d3,
+          result: ketQua.result,
+          tong: ketQua.tong,
           timestamp: Date.now()
         };
+        
+        gameData.isLive = true;
         
         // Đẩy kết quả cũ vào lịch sử nếu có
         if (gameData.pendingResult) {
@@ -195,32 +423,37 @@ function connectWebSocket() {
             d1: gameData.pendingResult.d1,
             d2: gameData.pendingResult.d2,
             d3: gameData.pendingResult.d3,
-            result: ketQuaTX(gameData.pendingResult.d1, gameData.pendingResult.d2, gameData.pendingResult.d3),
+            result: gameData.pendingResult.result,
+            tong: gameData.pendingResult.tong,
             timestamp: gameData.pendingResult.timestamp
           });
           
-          if (gameData.sessions.length > 50) {
+          if (gameData.sessions.length > MAX_SESSIONS) {
             gameData.sessions.pop();
           }
         }
         
         gameData.lastUpdate = Date.now();
-        console.log(`🎲 Phiên ${gameData.currentSession} (realtime) → ${gameData.nextSession} (hiển thị) | ${res.d1},${res.d2},${res.d3} → ${ketQuaTX(res.d1, res.d2, res.d3)}`);
+        console.log(`🎲 Phiên ${gameData.currentSession} (${res.d1},${res.d2},${res.d3}) → ${ketQua.result} ${ketQua.tong}`);
       }
       // Xử lý lịch sử
       else if (Array.isArray(json) && json[1]?.htr) {
         gameData.sessions = json[1].htr
           .filter(x => x.d1 !== undefined)
-          .map(x => ({
-            sid: x.sid,
-            d1: x.d1,
-            d2: x.d2,
-            d3: x.d3,
-            result: ketQuaTX(x.d1, x.d2, x.d3),
-            timestamp: Date.now()
-          }))
+          .map(x => {
+            const ketQua = ketQuaTX(x.d1, x.d2, x.d3);
+            return {
+              sid: x.sid,
+              d1: x.d1,
+              d2: x.d2,
+              d3: x.d3,
+              result: ketQua.result,
+              tong: ketQua.tong,
+              timestamp: Date.now()
+            };
+          })
           .sort((a, b) => b.sid - a.sid)
-          .slice(0, 50);
+          .slice(0, MAX_SESSIONS);
           
         if (gameData.sessions.length > 0) {
           gameData.currentSession = gameData.sessions[0].sid;
@@ -235,27 +468,30 @@ function connectWebSocket() {
 
   wsConnection.on('close', () => {
     gameData.isConnected = false;
+    gameData.isLive = false;
     console.log("🔌 Mất kết nối, đang thử kết nối lại...");
     setTimeout(connectWebSocket, 5000);
   });
 
   wsConnection.on('error', (err) => {
     gameData.isConnected = false;
+    gameData.isLive = false;
     console.error("❌ Lỗi kết nối:", err.message);
   });
 }
 
-// API Endpoint
+// API Endpoint với định dạng chuẩn
 fastify.get("/api/789club", async (request, reply) => {
   try {
     // Tổng hợp dữ liệu
     const allResults = [
       ...(gameData.pendingResult ? [{
-        sid: gameData.currentSession, // Sử dụng phiên realtime
+        sid: gameData.currentSession,
         d1: gameData.pendingResult.d1,
         d2: gameData.pendingResult.d2,
         d3: gameData.pendingResult.d3,
-        result: ketQuaTX(gameData.pendingResult.d1, gameData.pendingResult.d2, gameData.pendingResult.d3),
+        result: gameData.pendingResult.result,
+        tong: gameData.pendingResult.tong,
         timestamp: gameData.pendingResult.timestamp
       }] : []),
       ...gameData.sessions
@@ -269,8 +505,8 @@ fastify.get("/api/789club", async (request, reply) => {
       });
     }
 
-    const phienTruoc = allResults[0]; // Phiên realtime từ WS
-    const phienHienTai = gameData.nextSession || phienTruoc.sid + 1; // Luôn là phien_truoc + 1
+    const phienTruoc = allResults[0];
+    const phienHienTai = gameData.nextSession || phienTruoc.sid + 1;
     
     // Tạo chuỗi lịch sử
     const lichSuTX = allResults.map(p => p.result).join("");
@@ -278,22 +514,20 @@ fastify.get("/api/789club", async (request, reply) => {
 
     return {
       status: "success",
-      phien: {
-        truoc: phienTruoc.sid,     // Phiên realtime từ WS (không thay đổi)
-        hien_tai: phienHienTai     // Luôn là phien_truoc + 1
-      },
+      phien_truoc: phienTruoc.sid,
       xuc_xac: [phienTruoc.d1, phienTruoc.d2, phienTruoc.d3],
       ket_qua: phienTruoc.result,
+      tong: phienTruoc.tong,
+      phien_hien_tai: phienHienTai,
       du_doan: duDoanTuTT(pattern),
       do_tin_cay: `${gameData.currentConfidence}%`,
-      thong_tin: {
-        cau: lichSuTX.substring(0, 15),
-        thuat_toan: pattern,
-        update_time: gameData.lastUpdate,
-        server_time: Date.now(),
-        is_connected: gameData.isConnected,
-        latency: gameData.latency
-      }
+      cau: lichSuTX.substring(0, 15),
+      thuat_toan: pattern,
+      last_update: gameData.lastUpdate,
+      server_time: Date.now(),
+      is_live: gameData.isLive,
+      is_connected: gameData.isConnected,
+      total_sessions: gameData.sessions.length
     };
   } catch (err) {
     console.error("Lỗi API:", err);

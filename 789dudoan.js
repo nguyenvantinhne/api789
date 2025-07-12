@@ -342,7 +342,7 @@ function connectWebSocket() {
     
     heartbeatTimer = setInterval(() => {
       if (wsConnection.readyState === WebSocket.OPEN) {
-        wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuPlugin", { cmd: 1005 }]));
+        wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 2000 }]));
       }
     }, HEARTBEAT_INTERVAL);
   });

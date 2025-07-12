@@ -1,44 +1,31 @@
 const Fastify = require("fastify");
+const cors = require("@fastify/cors");
 const WebSocket = require("ws");
 
-const fastify = Fastify({ 
-  logger: false,
+const PORT = process.env.PORT || 3001;
+const HEARTBEAT_INTERVAL = 800;
+const MAX_RECONNECT_ATTEMPTS = 10;
+
+// Initialize Fastify with simple logger
+const fastify = Fastify({
+  logger: true, // Use default logger
   bodyLimit: 1048576 * 10
 });
 
-const PORT = process.env.PORT || 3002;
-const WS_URL = "wss://websocket.atpman.net/websocket";
-const HEARTBEAT_INTERVAL = 3000;
-const MAX_RECONNECT_ATTEMPTS = 10;
-const MAX_SESSIONS = 100;
-
-// Cấu hình WebSocket headers
-const WS_HEADERS = {
-  "Host": "websocket.atpman.net",
-  "Origin": "https://play.789club.sx",
-  "User-Agent": "Mozilla/5.0",
-  "Accept-Encoding": "gzip, deflate, br, zstd",
-  "Accept-Language": "vi-VN,vi;q=0.9",
-  "Pragma": "no-cache",
-  "Cache-Control": "no-cache"
-};
-
-// Biến lưu trữ dữ liệu
-let gameData = {
+// Game data
+const gameData = {
   sessions: [],
   currentSession: null,
-  nextSession: null,
-  pendingResult: null,
+  pendingSession: null,
+  lastResults: [],
   lastUpdate: Date.now(),
   currentConfidence: Math.floor(Math.random() * (97 - 51 + 1)) + 51,
-  isConnected: false,
-  lastMessageTime: Date.now(),
-  latency: 0,
-  isLive: false
+  maxSessions: 100,
+  isConnected: false
 };
 
-// Bản đồ dự đoán
-const duDoanMap = {
+// Prediction map
+const predictionMap = {
   "TXT": "Xỉu", 
   "TTXX": "Tài", 
   "XXTXX": "Tài", 
@@ -293,26 +280,26 @@ const duDoanMap = {
   "XXXXXXX": "Tài"
 };
 
-function duDoanTuTT(pattern) {
-  for (let len = Math.min(pattern.length, 6); len >= 1; len--) {
+function predictFromPattern(pattern) {
+  for (let len = Math.min(pattern.length, 4); len >= 1; len--) {
     const key = pattern.substring(0, len);
-    if (duDoanMap[key]) return duDoanMap[key];
+    if (predictionMap[key]) return predictionMap[key];
   }
   return pattern[0] === "T" ? "Tài" : "Xỉu";
 }
 
-function ketQuaTX(d1, d2, d3) {
-  const tong = d1 + d2 + d3;
+function calculateResult(d1, d2, d3) {
+  const sum = d1 + d2 + d3;
   return {
-    result: tong >= 11 ? "T" : "X",
-    tong: tong
+    result: sum >= 11 ? "T" : "X",
+    sum: sum
   };
 }
 
+// WebSocket Connection
 let wsConnection = null;
 let heartbeatTimer = null;
 let reconnectAttempts = 0;
-let latencyCheckTimer = null;
 
 function connectWebSocket() {
   if (wsConnection) {
@@ -323,39 +310,21 @@ function connectWebSocket() {
   }
 
   clearInterval(heartbeatTimer);
-  clearInterval(latencyCheckTimer);
 
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-    setTimeout(() => {
-      reconnectAttempts = 0;
-      connectWebSocket();
-    }, 60000);
+    fastify.log.error(`Failed to reconnect after ${MAX_RECONNECT_ATTEMPTS} attempts`);
     return;
   }
 
   reconnectAttempts++;
-  console.log(`Đang kết nối... (lần thử ${reconnectAttempts})`);
+  fastify.log.info(`Connecting to SunWin (attempt ${reconnectAttempts})...`);
 
-  wsConnection = new WebSocket(WS_URL, {
-    headers: WS_HEADERS,
-    perMessageDeflate: false
-  });
-
-  latencyCheckTimer = setInterval(() => {
-    if (wsConnection.readyState === WebSocket.OPEN) {
-      const pingTime = Date.now();
-      wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalancedPlugin", { 
-        cmd: 2001, 
-        ping: pingTime 
-      }]));
-    }
-  }, 5000);
+  wsConnection = new WebSocket("wss://websocket.atpman.net/websocket");
 
   wsConnection.on('open', () => {
     reconnectAttempts = 0;
     gameData.isConnected = true;
-    gameData.lastMessageTime = Date.now();
-    console.log("✅ Kết nối thành công");
+    fastify.log.info("Connection established");
     
     const authData = [
       1,
@@ -369,208 +338,174 @@ function connectWebSocket() {
     ];
     
     wsConnection.send(JSON.stringify(authData));
-    
-    setTimeout(() => {
-      if (wsConnection.readyState === WebSocket.OPEN) {
-        wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 1001 }]));
-      }
-    }, 1000);
+    wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuPlugin", { cmd: 1001 }]));
     
     heartbeatTimer = setInterval(() => {
       if (wsConnection.readyState === WebSocket.OPEN) {
-        wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 2000 }]));
+        wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuPlugin", { cmd: 1005 }]));
       }
     }, HEARTBEAT_INTERVAL);
   });
 
   wsConnection.on('message', (data) => {
     try {
-      gameData.lastMessageTime = Date.now();
       const json = JSON.parse(data);
-      
-      if (Array.isArray(json) && json[3]?.res?.cmd === 2001 && json[3]?.res?.ping) {
-        gameData.latency = Date.now() - json[3].res.ping;
-        return;
-      }
-      
+
+      // Process real-time results
       if (Array.isArray(json) && json[3]?.res?.d1 !== undefined) {
         const res = json[3].res;
-        const ketQua = ketQuaTX(res.d1, res.d2, res.d3);
         
-        gameData.currentSession = res.sid;
-        gameData.nextSession = res.sid + 1;
-        
-        gameData.pendingResult = {
-          d1: res.d1,
-          d2: res.d2, 
-          d3: res.d3,
-          result: ketQua.result,
-          tong: ketQua.tong,
-          timestamp: Date.now()
-        };
-        
-        gameData.isLive = true;
-        
-        if (gameData.pendingResult) {
-          gameData.sessions.unshift({
-            sid: gameData.currentSession - 1,
-            d1: gameData.pendingResult.d1,
-            d2: gameData.pendingResult.d2,
-            d3: gameData.pendingResult.d3,
-            result: gameData.pendingResult.result,
-            tong: gameData.pendingResult.tong,
-            timestamp: gameData.pendingResult.timestamp
-          });
-          
-          if (gameData.sessions.length > MAX_SESSIONS) {
-            gameData.sessions.pop();
+        if (!gameData.currentSession || res.sid > gameData.currentSession) {
+          if (gameData.pendingSession) {
+            const result = calculateResult(gameData.pendingSession.d1, gameData.pendingSession.d2, gameData.pendingSession.d3);
+            gameData.lastResults.unshift({
+              ...gameData.pendingSession,
+              result: result.result,
+              sum: result.sum
+            });
+            
+            if (gameData.lastResults.length > 20) {
+              gameData.lastResults.pop();
+            }
           }
+
+          gameData.pendingSession = {
+            sid: res.sid,
+            d1: res.d1,
+            d2: res.d2,
+            d3: res.d3,
+            timestamp: Date.now()
+          };
+          
+          gameData.currentSession = res.sid;
+          gameData.currentConfidence = Math.floor(Math.random() * (97 - 51 + 1)) + 51;
+          gameData.lastUpdate = Date.now();
+          
+          fastify.log.info(`New session ${res.sid}: ${res.d1},${res.d2},${res.d3}`);
         }
-        
-        gameData.lastUpdate = Date.now();
-        console.log(`🎲 Phiên ${gameData.currentSession} (${res.d1},${res.d2},${res.d3}) → ${ketQua.result} ${ketQua.tong}`);
       }
+      // Process history
       else if (Array.isArray(json) && json[1]?.htr) {
         gameData.sessions = json[1].htr
           .filter(x => x.d1 !== undefined)
           .map(x => {
-            const ketQua = ketQuaTX(x.d1, x.d2, x.d3);
+            const result = calculateResult(x.d1, x.d2, x.d3);
             return {
               sid: x.sid,
               d1: x.d1,
               d2: x.d2,
               d3: x.d3,
-              result: ketQua.result,
-              tong: ketQua.tong,
+              result: result.result,
+              sum: result.sum,
               timestamp: Date.now()
             };
           })
           .sort((a, b) => b.sid - a.sid)
-          .slice(0, MAX_SESSIONS);
+          .slice(0, gameData.maxSessions);
           
         if (gameData.sessions.length > 0) {
           gameData.currentSession = gameData.sessions[0].sid;
-          gameData.nextSession = gameData.currentSession + 1;
         }
-        console.log(`📚 Đã tải ${gameData.sessions.length} phiên lịch sử`);
+        fastify.log.info(`Loaded ${gameData.sessions.length} historical sessions`);
       }
     } catch (error) {
-      console.error("❌ Lỗi xử lý dữ liệu:", error.message);
+      fastify.log.error("Data processing error:", error);
     }
   });
 
   wsConnection.on('close', () => {
     gameData.isConnected = false;
-    gameData.isLive = false;
-    console.log("🔌 Mất kết nối, đang thử kết nối lại...");
+    fastify.log.warn("Connection lost, attempting to reconnect...");
     setTimeout(connectWebSocket, 5000);
   });
 
   wsConnection.on('error', (err) => {
     gameData.isConnected = false;
-    gameData.isLive = false;
-    console.error("❌ Lỗi kết nối:", err.message);
+    fastify.log.error("Connection error:", err);
   });
 }
 
-// API Endpoint với định dạng chuẩn cho bot
+// CORS
+fastify.register(cors, {
+  origin: "*",
+  methods: ["GET", "OPTIONS"]
+});
+
+// API Endpoint
 fastify.get("/api/789club", async (request, reply) => {
   try {
     const allResults = [
-      ...(gameData.pendingResult ? [{
-        sid: gameData.currentSession,
-        d1: gameData.pendingResult.d1,
-        d2: gameData.pendingResult.d2,
-        d3: gameData.pendingResult.d3,
-        result: gameData.pendingResult.result,
-        tong: gameData.pendingResult.tong,
-        timestamp: gameData.pendingResult.timestamp
+      ...(gameData.pendingSession ? [{
+        ...gameData.pendingSession,
+        ...calculateResult(gameData.pendingSession.d1, gameData.pendingSession.d2, gameData.pendingSession.d3)
       }] : []),
+      ...gameData.lastResults,
       ...gameData.sessions
-    ];
+    ].sort((a, b) => b.sid - a.sid);
 
-    if (allResults.length < 1) {
-      return reply.status(200).send({
-        status: "waiting",
-        message: "Đang chờ dữ liệu phiên...",
+    if (allResults.length === 0) {
+      return reply.status(404).send({
+        status: "error",
+        message: "No session data available",
         is_connected: gameData.isConnected
       });
     }
 
-    const phienTruoc = allResults[0];
-    const phienHienTai = gameData.nextSession || phienTruoc.sid + 1;
-    const lichSuTX = allResults.map(p => p.result).join("");
-    const pattern = lichSuTX.substring(0, 6);
+    const last15Results = allResults.slice(0, 15);
+    const pattern = last15Results.map(p => p.result).join("");
 
-    // Định dạng response chuẩn cho bot
     const response = {
-      // Thông tin cơ bản
       status: "success",
+      session: allResults[0].sid,
+      dice: [allResults[0].d1, allResults[0].d2, allResults[0].d3],
+      result: allResults[0].result,
+      sum: allResults[0].sum,
+      next_session: allResults[0].sid + 1,
+      prediction: predictFromPattern(pattern),
+      confidence: `${gameData.currentConfidence}%`,
+      pattern: pattern,
+      algorithm: pattern.substring(0, 6),
+      last_update: gameData.lastUpdate,
       server_time: Date.now(),
+      is_live: !!gameData.pendingSession,
       is_connected: gameData.isConnected,
-      is_live: gameData.isLive,
-      
-      // Dữ liệu phiên
-      phien_truoc: phienTruoc.sid,
-      phien_hien_tai: phienHienTai,
-      xuc_xac: [phienTruoc.d1, phienTruoc.d2, phienTruoc.d3],
-      ket_qua: phienTruoc.result,
-      tong: phienTruoc.tong,
-      
-      // Dự đoán
-      du_doan: duDoanTuTT(pattern),
-      do_tin_cay: `${gameData.currentConfidence}%`,
-      
-      // Lịch sử
-      cau: lichSuTX.substring(0, 15),
-      thuat_toan: pattern,
-      total_sessions: gameData.sessions.length,
-      
-      // Định dạng đặc biệt cho bot
-      bot_format: {
-        phien_hien_tai: phienHienTai,
-        du_doan: duDoanTuTT(pattern),
-        do_tin_cay: gameData.currentConfidence,
-        xucXac: `${phienTruoc.d1},${phienTruoc.d2},${phienTruoc.d3}`,
-        ketQua: phienTruoc.result,
-        tongDiem: phienTruoc.tong
-      }
+      total_sessions: allResults.length
     };
 
-    return reply.send(response);
+    // Format for robot web reading
+    const robotResponse = {
+      phien_hien_tai: response.next_session || response.session || "...",
+      du_doan: response.prediction || "...",
+      do_tin_cay: Math.round(parseFloat(response.confidence)) || "...",
+      data: response
+    };
+
+    return robotResponse;
   } catch (err) {
-    console.error("Lỗi API:", err);
+    fastify.log.error("API error:", err);
     return reply.status(500).send({
       status: "error",
-      message: "Lỗi hệ thống",
-      error: err.message
+      message: "System error"
     });
   }
 });
 
-// Khởi động
-connectWebSocket();
-
-// Kiểm tra kết nối định kỳ
-setInterval(() => {
-  if (gameData.isConnected && (Date.now() - gameData.lastMessageTime) > 15000) {
-    console.warn("⚠️ Không nhận được dữ liệu trong 15 giây, đóng kết nối...");
-    wsConnection.close();
-  }
-}, 5000);
-
+// Start server
 fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
   if (err) {
-    console.error("Lỗi khởi động server:", err);
+    fastify.log.error("Server startup error:", err);
     process.exit(1);
   }
-  console.log(`🚀 Server đang chạy trên cổng ${PORT}`);
+  fastify.log.info(`Server running on port ${PORT}`);
+  connectWebSocket();
 });
 
+// Handle server shutdown
 process.on("SIGINT", () => {
-  console.log("🛑 Đang tắt server...");
+  fastify.log.info("Shutting down server...");
   if (wsConnection) wsConnection.close();
   clearInterval(heartbeatTimer);
-  clearInterval(latencyCheckTimer);
-  fastify.close(() => process.exit(0));
+  fastify.close().then(() => {
+    process.exit(0);
+  });
 });

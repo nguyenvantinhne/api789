@@ -8,7 +8,7 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 
 // Initialize Fastify with simple logger
 const fastify = Fastify({
-  logger: true, // Use default logger
+  logger: true,
   bodyLimit: 1048576 * 10
 });
 
@@ -24,7 +24,7 @@ const gameData = {
   isConnected: false
 };
 
-// Prediction map
+// Prediction map (giữ nguyên như code gốc)
 const predictionMap = {
   "TXT": "Xỉu", 
   "TTXX": "Tài", 
@@ -355,9 +355,16 @@ function connectWebSocket() {
       if (Array.isArray(json) && json[3]?.res?.d1 !== undefined) {
         const res = json[3].res;
         
-        if (!gameData.currentSession || res.sid > gameData.currentSession) {
+        const isNewSession = !gameData.currentSession || 
+                           (res.sid > gameData.currentSession && 
+                            res.timestamp > (gameData.lastUpdate - 10000));
+        
+        if (isNewSession) {
           if (gameData.pendingSession) {
-            const result = calculateResult(gameData.pendingSession.d1, gameData.pendingSession.d2, gameData.pendingSession.d3);
+            const result = calculateResult(gameData.pendingSession.d1, 
+                                          gameData.pendingSession.d2, 
+                                          gameData.pendingSession.d3);
+            
             gameData.lastResults.unshift({
               ...gameData.pendingSession,
               result: result.result,
@@ -431,7 +438,7 @@ fastify.register(cors, {
   methods: ["GET", "OPTIONS"]
 });
 
-// API Endpoint
+// API Endpoint - Đã sửa đổi để trả về đúng định dạng
 fastify.get("/api/789club", async (request, reply) => {
   try {
     const allResults = [
@@ -455,32 +462,28 @@ fastify.get("/api/789club", async (request, reply) => {
     const pattern = last15Results.map(p => p.result).join("");
 
     const response = {
-      status: "success",
-      session: allResults[0].sid,
-      dice: [allResults[0].d1, allResults[0].d2, allResults[0].d3],
-      result: allResults[0].result,
-      sum: allResults[0].sum,
-      next_session: allResults[0].sid + 1,
-      prediction: predictFromPattern(pattern),
-      confidence: `${gameData.currentConfidence}%`,
-      pattern: pattern,
-      algorithm: pattern.substring(0, 6),
-      last_update: gameData.lastUpdate,
-      server_time: Date.now(),
-      is_live: !!gameData.pendingSession,
-      is_connected: gameData.isConnected,
-      total_sessions: allResults.length
+      phien_hien_tai: allResults[0].sid + 1, // Phiên tiếp theo
+      du_doan: predictFromPattern(pattern),
+      do_tin_cay: gameData.currentConfidence,
+      data: {
+        session: allResults[0].sid,
+        dice: [allResults[0].d1, allResults[0].d2, allResults[0].d3],
+        result: allResults[0].result,
+        sum: allResults[0].sum,
+        next_session: allResults[0].sid + 1,
+        prediction: predictFromPattern(pattern),
+        confidence: `${gameData.currentConfidence}%`,
+        pattern: pattern,
+        algorithm: pattern.substring(0, 6),
+        last_update: gameData.lastUpdate,
+        server_time: Date.now(),
+        is_live: !!gameData.pendingSession,
+        is_connected: gameData.isConnected,
+        total_sessions: allResults.length
+      }
     };
 
-    // Format for robot web reading
-    const robotResponse = {
-      phien_hien_tai: response.next_session || response.session || "...",
-      du_doan: response.prediction || "...",
-      do_tin_cay: Math.round(parseFloat(response.confidence)) || "...",
-      data: response
-    };
-
-    return robotResponse;
+    return response;
   } catch (err) {
     fastify.log.error("API error:", err);
     return reply.status(500).send({

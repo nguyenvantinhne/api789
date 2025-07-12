@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3002;
 const WS_URL = "wss://websocket.atpman.net/websocket";
 const HEARTBEAT_INTERVAL = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
-const MAX_SESSIONS = 100; // Giới hạn số phiên lịch sử lưu trữ
+const MAX_SESSIONS = 100;
 
 // Cấu hình WebSocket headers
 const WS_HEADERS = {
@@ -26,9 +26,9 @@ const WS_HEADERS = {
 // Biến lưu trữ dữ liệu
 let gameData = {
   sessions: [],
-  currentSession: null,       // Phiên realtime từ WS (phien_truoc)
-  nextSession: null,         // Phiên hiện tại (phien_hien_tai = phien_truoc + 1)
-  pendingResult: null,       // Kết quả xúc xắc đang chờ
+  currentSession: null,
+  nextSession: null,
+  pendingResult: null,
   lastUpdate: Date.now(),
   currentConfidence: Math.floor(Math.random() * (97 - 51 + 1)) + 51,
   isConnected: false,
@@ -37,7 +37,7 @@ let gameData = {
   isLive: false
 };
 
-// Bản đồ dự đoán (giữ nguyên)
+// Bản đồ dự đoán
 const duDoanMap = {
   "TXT": "Xỉu", 
   "TTXX": "Tài", 
@@ -393,18 +393,13 @@ function connectWebSocket() {
         return;
       }
       
-      // Xử lý kết quả realtime
       if (Array.isArray(json) && json[3]?.res?.d1 !== undefined) {
         const res = json[3].res;
         const ketQua = ketQuaTX(res.d1, res.d2, res.d3);
         
-        // Cập nhật phiên realtime (phien_truoc)
         gameData.currentSession = res.sid;
-        
-        // Tạo phiên hiện tại (phien_hien_tai = phien_truoc + 1)
         gameData.nextSession = res.sid + 1;
         
-        // Lưu kết quả đang chờ
         gameData.pendingResult = {
           d1: res.d1,
           d2: res.d2, 
@@ -416,10 +411,9 @@ function connectWebSocket() {
         
         gameData.isLive = true;
         
-        // Đẩy kết quả cũ vào lịch sử nếu có
         if (gameData.pendingResult) {
           gameData.sessions.unshift({
-            sid: gameData.currentSession - 1, // Phiên trước đó
+            sid: gameData.currentSession - 1,
             d1: gameData.pendingResult.d1,
             d2: gameData.pendingResult.d2,
             d3: gameData.pendingResult.d3,
@@ -436,7 +430,6 @@ function connectWebSocket() {
         gameData.lastUpdate = Date.now();
         console.log(`🎲 Phiên ${gameData.currentSession} (${res.d1},${res.d2},${res.d3}) → ${ketQua.result} ${ketQua.tong}`);
       }
-      // Xử lý lịch sử
       else if (Array.isArray(json) && json[1]?.htr) {
         gameData.sessions = json[1].htr
           .filter(x => x.d1 !== undefined)
@@ -480,10 +473,9 @@ function connectWebSocket() {
   });
 }
 
-// API Endpoint với định dạng chuẩn
+// API Endpoint với định dạng chuẩn cho bot
 fastify.get("/api/789club", async (request, reply) => {
   try {
-    // Tổng hợp dữ liệu
     const allResults = [
       ...(gameData.pendingResult ? [{
         sid: gameData.currentSession,
@@ -507,28 +499,45 @@ fastify.get("/api/789club", async (request, reply) => {
 
     const phienTruoc = allResults[0];
     const phienHienTai = gameData.nextSession || phienTruoc.sid + 1;
-    
-    // Tạo chuỗi lịch sử
     const lichSuTX = allResults.map(p => p.result).join("");
     const pattern = lichSuTX.substring(0, 6);
 
-    return {
+    // Định dạng response chuẩn cho bot
+    const response = {
+      // Thông tin cơ bản
       status: "success",
+      server_time: Date.now(),
+      is_connected: gameData.isConnected,
+      is_live: gameData.isLive,
+      
+      // Dữ liệu phiên
       phien_truoc: phienTruoc.sid,
+      phien_hien_tai: phienHienTai,
       xuc_xac: [phienTruoc.d1, phienTruoc.d2, phienTruoc.d3],
       ket_qua: phienTruoc.result,
       tong: phienTruoc.tong,
-      phien_hien_tai: phienHienTai,
+      
+      // Dự đoán
       du_doan: duDoanTuTT(pattern),
       do_tin_cay: `${gameData.currentConfidence}%`,
+      
+      // Lịch sử
       cau: lichSuTX.substring(0, 15),
       thuat_toan: pattern,
-      last_update: gameData.lastUpdate,
-      server_time: Date.now(),
-      is_live: gameData.isLive,
-      is_connected: gameData.isConnected,
-      total_sessions: gameData.sessions.length
+      total_sessions: gameData.sessions.length,
+      
+      // Định dạng đặc biệt cho bot
+      bot_format: {
+        phien_hien_tai: phienHienTai,
+        du_doan: duDoanTuTT(pattern),
+        do_tin_cay: gameData.currentConfidence,
+        xucXac: `${phienTruoc.d1},${phienTruoc.d2},${phienTruoc.d3}`,
+        ketQua: phienTruoc.result,
+        tongDiem: phienTruoc.tong
+      }
     };
+
+    return reply.send(response);
   } catch (err) {
     console.error("Lỗi API:", err);
     return reply.status(500).send({

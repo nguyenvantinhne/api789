@@ -2,7 +2,7 @@ const Fastify = require("fastify");
 const cors = require("@fastify/cors");
 const WebSocket = require("ws");
 
-const TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhbW91bnQiOjAsInVzZXJuYW1lIjoiU0Nfbmd1eWVudmFudGluaG5lIn0.xA0RUywLG_QJtJFQLV_pP3G0LXFw6gVpRGETTG9Dh6A";
+
 const PORT = process.env.PORT || 3001;
 const HEARTBEAT_INTERVAL = 800;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -360,7 +360,7 @@ function connectWebSocket() {
   reconnectAttempts++;
   fastify.log.info(`Connecting to SunWin (attempt ${reconnectAttempts})...`);
 
-  wsConnection = new WebSocket("wss://websocket.atpman.net/websocket");
+  wsConnection = new WebSocket("wss://websocket.aptman.net/websocket");
 
   wsConnection.on('open', () => {
     reconnectAttempts = 0;
@@ -370,20 +370,20 @@ function connectWebSocket() {
     const authData = [
       1,
       "MiniGame",
-      "dfghhhgffgggg",
+      "SC_nguyenvantinhne",
       "tinhbip",
       {
-        info: "{\"ipAddress\":\"2402:9d80:36a:1716:13d7:a37a:60e2:2c64\",\"userId\":\"f68cd413-44d4-4bf5-96eb-23da9a317f17\",\"username\":\"S8_dfghhhgffgggg\",\"timestamp\":1752167805248,\"refreshToken\":\"498e236e749f4afdb8517d1cd23a419b.0ab31b9e397f4cf0b9c23b3d6a7596b6\"}",
-        signature: "52830A25058B665F9A929FD75A80E6893BCD7DDB2BA3276B132BC863453AA09AE60B66FBE4B25F3892B27492391BF08F30D2DDD84B140F0007F1630BC6727A45543749ED892B94D78FEC9683FCF9A15F4EF582D8E4D9F7DD85AFD3BAE566A7B886F7DC380DA10EF5527C38BEE9E4F06C95B9612105CC1B2545C2A13644A29F1F"
+        "info": "{\"ipAddress\":\"2001:ee0:514c:dbf0:155e:5c33:dfae:3ecf\",\"userId\":\"f68cd413-44d4-4bf5-96eb-23da9a317f17\",\"username\":\"S8_dfghhhgffgggg\",\"timestamp\":1752433091394,\"refreshToken\":\"498e236e749f4afdb8517d1cd23a419b.0ab31b9e397f4cf0b9c23b3d6a7596b6\"}",
+        "signature": "5E6C6B618B920867813C56B2C140BE4F8A589F1E11A51CED0771DB813FE7E163B8FA257A4644A23324138578977E308910A874AE04763FFFEA93B4B2BA5BF3E8611C55286F295B573E0CF21FC8F55B089DA0E2FB103B0C73CEB863FDCFD47F1EA890A23399DC680EB0A1A31C555654C92902F1F3A81CF738A1F8A16C0E366F3D"
       }
     ];
     
     wsConnection.send(JSON.stringify(authData));
-    wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 1001 }]));
+    wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalanced", { cmd: 1001 }]));
     
     heartbeatTimer = setInterval(() => {
       if (wsConnection.readyState === WebSocket.OPEN) {
-        wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 2000 }]));
+        wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalanced", { cmd: 2000 }]));
       }
     }, HEARTBEAT_INTERVAL);
 
@@ -396,7 +396,7 @@ function connectWebSocket() {
     if (wsConnection.readyState === WebSocket.OPEN) {
       const now = Date.now();
       if (now - gameData.lastHistoryUpdate > 25000) { // Chỉ tải nếu đã qua 25s từ lần cuối
-        wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 1002, count: 100 }]));
+        wsConnection.send(JSON.stringify([6, "MiniGame", "taixiuUnbalanced", { cmd: 1002, count: 100 }]));
         gameData.lastHistoryUpdate = now;
       }
     }
